@@ -1,0 +1,23 @@
+{
+  "Yeti": {
+    "aliases": ["yeti", "yetis"],
+    "days": 18,
+    "source": "api",
+    "spawnTimes": "13:20 / 20:00"
+  },
+  "Zevelon Duskbringer": {
+    "aliases": ["zevelon duskbringer"],
+    "days": null,
+    "source": "api"
+  },
+  "Fernfang": {
+    "aliases": ["fernfang"],
+    "days": null,
+    "source": "api"
+  },
+  "General Murius": {
+    "aliases": ["general murius"],
+    "days": null,
+    "source": "api"
+  }
+}

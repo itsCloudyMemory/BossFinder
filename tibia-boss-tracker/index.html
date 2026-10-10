@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tibia Boss Tracker</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        body { background-color: #0e1217; color: #a3a8b4; padding: 20px; font-size: 14px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        header { background: linear-gradient(135deg, #181e29 0%, #111622 100%); padding: 20px; border-radius: 8px;
+            margin-bottom: 20px; border: 1px solid #262e41; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        h1 { color: #f1f2f4; font-size: 20px; margin-bottom: 5px; display: flex; align-items: center; gap: 10px; }
+        h1::before { content: "⚔️"; }
+        p.subtitle { color: #62697a; font-size: 12px; }
+        .card { background-color: #161b26; border: 1px solid #262e41; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        h2 { color: #f1f2f4; font-size: 15px; margin-bottom: 15px; padding-bottom: 8px; border-bottom: 2px solid #262e41; }
+        .controls { display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end; }
+        label { display: block; color: #8f96a3; font-size: 12px; margin-bottom: 5px; font-weight: bold; }
+        select { background-color: #0e1217; color: #f1f2f4; border: 1px solid #323d54; padding: 8px 12px;
+            border-radius: 4px; font-size: 14px; width: 240px; }
+        select:focus { outline: none; border-color: #4a72ff; }
+        button { background-color: #234bff; color: white; border: none; padding: 9px 16px; border-radius: 4px;
+            cursor: pointer; font-weight: bold; font-size: 13px; transition: background 0.2s; }
+        button:hover { background-color: #1a3fd6; }
+        button:disabled { opacity: .6; cursor: default; }
+        .meta { margin-left: auto; font-size: 12px; color: #62697a; text-align: right; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; background-color: #111520;
+            border-radius: 6px; overflow: hidden; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #1c2333; }
+        th { background-color: #181f30; color: #f1f2f4; font-weight: 600; font-size: 12px;
+            text-transform: uppercase; letter-spacing: 0.5px; }
+        tr:last-child td { border-bottom: none; }
+        td.world { font-weight: bold; color: #f1f2f4; }
+        td.eta { color: #ffcc00; font-weight: bold; }
+        td.empty { text-align: center; color: #62697a; padding: 30px; }
+        .status-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 11px;
+            font-weight: bold; text-transform: uppercase; }
+        .status-expected { background: rgba(225,169,0,.15); color: #ffcc00; border: 1px solid rgba(225,169,0,.3); }
+        .status-active { background: rgba(0,200,83,.15); color: #00e676; border: 1px solid rgba(0,200,83,.3); }
+        .status-blocked { background: rgba(255,23,68,.15); color: #ff1744; border: 1px solid rgba(255,23,68,.3); }
+        .status-unknown { background: rgba(143,150,163,.15); color: #8f96a3; border: 1px solid rgba(143,150,163,.3); }
+        .info-box { background-color: #181f30; border-left: 4px solid #234bff; padding: 12px;
+            border-radius: 0 4px 4px 0; margin-top: 15px; font-size: 13px; color: #cbd0db; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>Tibia Boss Tracker</h1>
+        <p class="subtitle">Mundos con el boss seleccionado visto en las kill statistics oficiales (vía TibiaData)</p>
+    </header>
+
+    <div class="card">
+        <h2>Boss</h2>
+        <div class="controls">
+            <div>
+                <label for="targetBoss">Boss seleccionado:</label>
+                <select id="targetBoss"></select>
+            </div>
+            <button id="refreshBtn">Refrescar datos</button>
+            <div class="meta" id="meta">Cargando…</div>
+        </div>
+        <div class="info-box" id="infoBox"></div>
+    </div>
+
+    <div class="card">
+        <h2>Estado por servidor</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Mundo</th>
+                    <th>Última aparición</th>
+                    <th>Próxima ventana (ETA)</th>
+                    <th>Días</th>
+                    <th>Estado</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    const TZ = "America/Argentina/Buenos_Aires";
+    const MONTHS = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+    const DAY_MS = 86400000;
+
+    let bosses = {};
+    let history = { bosses: {} };
+
+    const $ = (id) => document.getElementById(id);
+
+    // Fechas como "YYYY-MM-DD" -> UTC medianoche, para evitar líos de zona horaria.
+    const parse = (s) => new Date(s + "T00:00:00Z");
+    const fmt = (d) => `${String(d.getUTCDate()).padStart(2, "0")}-${MONTHS[d.getUTCMonth()]}`;
+    const todayART = () => parse(new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date()));
+
+    async function load() {
+        const bust = "?t=" + Date.now();
+        const [b, h] = await Promise.all([
+            fetch("bosses.json" + bust).then((r) => r.json()),
+            fetch("data/history.json" + bust).then((r) => r.json()),
+        ]);
+        bosses = b;
+        history = h;
+    }
+
+    function fillDropdown() {
+        const sel = $("targetBoss");
+        const current = sel.value;
+        sel.innerHTML = Object.entries(bosses).map(([name, b]) =>
+            `<option value="${name}">${name}${b.days ? ` (ventana: ${b.days} días)` : ""}</option>`).join("");
+        if (current && bosses[current]) sel.value = current;
+    }
+
+    function render() {
+        const name = $("targetBoss").value;
+        const boss = bosses[name];
+        const rows = Object.entries(history.bosses?.[name] ?? {});
+        const today = todayART();
+
+        $("infoBox").innerHTML = boss.days
+            ? `Fórmula: <strong>última aparición + ${boss.days} días</strong>.` +
+              (boss.spawnTimes ? ` Horarios de spawn: ${boss.spawnTimes}.` : "")
+            : `Para <strong>${name}</strong> todavía no hay ventana definida: solo se muestra la última aparición.`;
+
+        const data = rows.map(([world, last]) => {
+            const lastD = parse(last);
+            const etaD = boss.days ? new Date(lastD.getTime() + boss.days * DAY_MS) : null;
+            const diff = etaD ? Math.round((etaD - today) / DAY_MS) : null;
+            return { world, lastD, etaD, diff, since: Math.round((today - lastD) / DAY_MS) };
+        });
+        // Más cerca de abrir ventana primero; sin ventana, el más reciente primero.
+        data.sort((a, b) => (a.diff ?? 1e9) - (b.diff ?? 1e9) || a.since - b.since);
+
+        $("tableBody").innerHTML = data.length ? data.map((r) => {
+            let badge, days;
+            if (r.diff === null) { badge = `<span class="status-badge status-unknown">Sin ventana</span>`; days = `Hace ${r.since} días`; }
+            else if (r.diff > 0) { badge = `<span class="status-badge status-blocked">Bloqueado</span>`; days = `Faltan ${r.diff} días`; }
+            else if (r.diff === 0) { badge = `<span class="status-badge status-expected">¡Ventana abierta!</span>`; days = "Es HOY"; }
+            else { badge = `<span class="status-badge status-active">Puede aparecer</span>`; days = `Pasaron ${-r.diff} días`; }
+            return `<tr>
+                <td class="world">${r.world}</td>
+                <td>${fmt(r.lastD)}</td>
+                <td class="eta">${r.etaD ? fmt(r.etaD) : "—"}</td>
+                <td>${days}</td>
+                <td>${badge}</td></tr>`;
+        }).join("") : `<tr><td class="empty" colspan="5">Todavía no se registró ${name} en ningún mundo.</td></tr>`;
+
+        $("meta").textContent = history.updatedAt
+            ? `Última sincronización: ${new Date(history.updatedAt).toLocaleString("es-AR", { timeZone: TZ })}`
+            : "Sin sincronizaciones todavía";
+    }
+
+    async function refresh() {
+        const btn = $("refreshBtn");
+        btn.disabled = true;
+        try { await load(); fillDropdown(); render(); }
+        catch (e) { $("meta").textContent = "Error al cargar los datos: " + e.message; }
+        btn.disabled = false;
+    }
+
+    $("refreshBtn").addEventListener("click", refresh);
+    $("targetBoss").addEventListener("change", render);
+    refresh();
+</script>
+</body>
+</html>
